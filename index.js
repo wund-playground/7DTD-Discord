@@ -17,7 +17,7 @@ var d7dtdState = {
   waitingForTime: 0,
   waitingForVersion: 0,
   waitingForPlayers: 0,
-  //waitingForPref: 0,
+  waitingForPref: 0,
   receivedData: 0,
 
   skipVersionCheck: 0,
@@ -80,6 +80,42 @@ if(typeof config.password === "undefined") {
   process.exit();
 }
 var pass = config.password;
+
+// Instance Name
+var instanceName;
+if(typeof config["instance-name"] == "undefined") {
+	instanceName = "";
+}
+else {
+	instanceName = config["instance-name"];
+}
+
+// Mods Names
+var instanceModNames;
+if(typeof config["mods-names"] == "undefined") {
+	instanceModNames = "";
+}
+else {
+	instanceModNames = config["mods-names"];
+}
+
+// Server Address
+var serverAddress;
+if(typeof config["serverAddress"] == "undefined") {
+	serverAddress = "";
+}
+else {
+	serverAddress = config["serverAddress"];
+}
+
+// Server Port
+var serverPort;
+if(typeof config["serverPort"] == "undefined") {
+	serverPort = "";
+}
+else {
+	serverPort = config["serverPort"];
+}
 
 // Discord token
 if(typeof config.token === "undefined") {
@@ -242,6 +278,20 @@ function handlePlayerCount(line, msg) {
   msg.channel.send(line);
 }
 
+function handleGamePref(response){
+  var respLine = response.split("\n");
+  var jsonResponseObject = {};
+  respLine.forEach((line) => {
+  	if(line != ""){
+        var lineValues = line.split("=");
+        console.log(lineValues);
+        var lineKey = lineValues[0].replace("GamePref.","").trim();
+        var lineValue = lineValues[1].trim();
+        jsonResponseObject[lineKey] = lineValue;
+    }
+  });
+  return jsonResponseObject;
+}
 ////// # Discord # //////
 
 // updateDiscordStatus
@@ -363,12 +413,41 @@ function parseDiscordCommand(msg, mentioned) {
   {
     if(cmd.startsWith("EXEC")) {
       if(msg.channel.type === "text" && msg.member.permissions.has("MANAGE_GUILD") && msg.guild === channel.guild) {
-        console.log("User " + msg.author.tag + " (" + msg.author.id + ") executed command: " + cmd);
+        console.log("" + instanceName + "User " + msg.author.tag + " executed command: " + cmd);
         var execStr = msg.toString().replace(new RegExp(prefix + "EXEC", "ig"), "");
-        Telnet.exec(execStr);
+
+        msg.channel.send("" + instanceName + "User " + msg.author.tag + " (" + msg.author.id + ") executed command: " + execStr);
+
+        Telnet.exec(execStr, (err, response) => {
+          if(!err) {
+            msg.channel.send({embed: {
+              description: "" + instanceName + response
+            }})
+              .catch(() => {
+                // If the embed fails, try sending without it.
+                processTelnetResponse(response, (line) => {
+                  if(line == ""){
+    
+                  } else {
+                    msg.channel.send(line);
+                    d7dtdState.receivedData = 1;
+                  }
+                });
+              });
+
+            // Sometimes, the response doesn't have the data we're looking for...
+            if(!d7dtdState.receivedData) {
+              d7dtdState.waitingForTime = 1;
+              d7dtdState.waitingForTimeMsg = msg;
+            }
+          }
+          else {
+            handleCmdError(err);
+          }
+        });
       }
       else {
-        msg.author.send("You do not have permission to do this. (exec)");
+        msg.author.send("" + instanceName + "You do not have permission to do this. (exec)");
       }
     }
   }
@@ -398,7 +477,7 @@ function parseDiscordCommand(msg, mentioned) {
       }
 
 
-      var string = `Server connection: ${statusMsg}${cmdString}\n\n*7DTD-Discord v${pjson.version} - Powered by discord.js ${pjson.dependencies["discord.js"].replace("^","")}.*`;
+      var string = `${instanceName}Server connection: ${statusMsg}${cmdString}\nMods: ${instanceModNames}\n*7DTD-Discord (Original Server)\nServer Address: ${serverAddress}, Port: ${serverPort}`;
       msg.channel.send({embed: {
         description: string
       }})
@@ -415,12 +494,28 @@ function parseDiscordCommand(msg, mentioned) {
       if(cmd === "TIME" || cmd === "T" || cmd === "DAY") {
         Telnet.exec("gettime", (err, response) => {
           if(!err) {
-            processTelnetResponse(response, (line) => {
-              if(line.startsWith("Day")) {
-                d7dtdState.receivedData = 1;
-                handleTime(line, msg);
-              }
-            });
+            var day = response.split(",")[0].replace("Day ","");
+			var daysOffeset = 0;
+            var dayHorde = (parseInt(day / 7) + 1) * 7 - day + daysOffeset;
+
+            msg.channel.send({embed: {
+              description: `${instanceName}${response}\n${dayHorde} day${dayHorde===1?"":"s"} to next horde.`
+            }})
+              .catch(() => {
+                // If the embed fails, try sending without it.
+                processTelnetResponse(response, (line) => {
+                  if(line == ""){
+    
+                  } else {
+                    processTelnetResponse(response, (line) => {
+                      if(line.startsWith("Day")) {
+                        d7dtdState.receivedData = 1;
+                        handleTime(line, msg);
+                      }
+                    });
+                  }
+                });
+              });
 
             // Sometimes, the response doesn't have the data we're looking for...
             if(!d7dtdState.receivedData) {
@@ -440,7 +535,7 @@ function parseDiscordCommand(msg, mentioned) {
           if(!err) {
             processTelnetResponse(response, (line) => {
               if(line.startsWith("Game version:")) {
-                msg.channel.send(line);
+                msg.channel.send("" + instanceName + line + "\nMods: "+instanceModNames);
                 d7dtdState.receivedData = 1;
               }
             });
@@ -460,12 +555,25 @@ function parseDiscordCommand(msg, mentioned) {
       if(cmd === "PLAYERS" || cmd === "P" || cmd === "PL" || cmd === "LP") {
         Telnet.exec("lp", (err, response) => {
           if(!err) {
-            processTelnetResponse(response, (line) => {
-              if(line.startsWith("Total of ")) {
-                d7dtdState.receivedData = 1;
-                handlePlayerCount(line, msg);
-              }
-            });
+            
+            msg.channel.send({embed: {
+              description: "" + instanceName + response
+            }})
+              .catch(() => {
+                // If the embed fails, try sending without it.
+                processTelnetResponse(response, (line) => {
+                  if(line == ""){
+    
+                  } else {
+                    processTelnetResponse(response, (line) => {
+                      if(line.startsWith("Total of ")) {
+                        d7dtdState.receivedData = 1;
+                        handlePlayerCount(line, msg);
+                      }
+                    });
+                  }
+                });
+              });
 
             if(!d7dtdState.receivedData) {
               d7dtdState.waitingForPlayers = 1;
@@ -478,39 +586,52 @@ function parseDiscordCommand(msg, mentioned) {
         });
       }
 
-      //if(cmd === "PREF") {
-      //  Telnet.exec("getgamepref", (err, response) => {
-      //    if(!err) {
-      //      var str = msg.toString().toUpperCase().replace(prefix + "PREF ", "").replace(prefix + "PREF", "");
-      //      // Sometimes the "response" has more than what we're looking for.
-      //      // We have to double-check and make sure the correct line is returned.
-      //      if(typeof response !== "undefined") {
-      //        var lines = response.split("\n");
-      //        d7dtdState.receivedData = 0;
+      //START OF COMMENT
+      if(cmd === "PREF") {
+        /*
+       Telnet.exec("getgamepref", (err, response) => {
+         if(!err) {
+            var embededFields = [];
+            var prefObject = handleGamePref(response);
+            // A field's name is limited to 256 characters and its value to 1024 characters
+            // we're going to chunk it a little
+            const chunk_size = 32, chunks = [];
+            for ( const cols = Object.entries( prefObject ); cols.length; )
+              chunks.push( cols.splice(0, chunk_size).reduce( (o,[k,v])=>(o[k]=v,o), {}));
 
-      //        final = "";
-      //        for(var i = 0; i <= lines.length-1; i++) {
-      //          var line = lines[i];
-      //          if(line.startsWith("GamePref.")) {
-      //            final = final + "\n" + line.replace("GamePref.","");
-      //            d7dtdState.receivedData = 1;
-      //          }
-      //        }
-      //        msg.author.send(final);
-      //        msg.channel.send("Server configuration has been sent to you via DM.");
-      //        // TODO: Make sure user can receive DMs before sending
-      //      }
+              chunks.forEach((chunkedProps) => {
+                if(chunkedProps != ""){
+                  var stringifiedPropers = JSON.stringify(chunkedProps);
+                  embededFields.push({ name: 'Game Preferences', value: `${stringifiedPropers}`})
+                }
+              });
 
-      //      if(!d7dtdState.receivedData) {
-      //        d7dtdState.waitingForPref = 1;
-      //        d7dtdState.waitingForPrefMsg = msg;
-      //      }
-      //    }
-      //    else {
-      //      handleCmdError(err);
-      //    }
-      //  });
-      //}
+
+            msg.channel.send({embed: {fields : embededFields}})
+            .catch(() => {
+              // If the embed fails, try sending without it.
+              processTelnetResponse(response, (line) => {
+                if(line == ""){
+  
+                } else {
+                  msg.channel.send(line);
+                  d7dtdState.receivedData = 1;
+                }
+              });
+            });
+
+          if(!d7dtdState.receivedData) {
+            d7dtdState.waitingForPref = 1;
+            d7dtdState.waitingForPrefMsg = msg;
+          }
+        }
+         else {
+           handleCmdError(err);
+         }
+       });
+       */
+      }
+      // END OF COMMENT
     }
   }
 }
@@ -615,13 +736,13 @@ Telnet.on("data", (data) => {
 
       channel.send({embed: {
         color: 14164000,
-        description: "The server has shut down."
+        description: "" + instanceName + "The server has shut down."
       }})
         .catch(() => {
         // Try re-sending without the embed if an error occurs.
           channel.send("**The server has shut down.**")
             .catch((err) => {
-              console.log("Failed to send message with error: " + err.message);
+              console.log("" + instanceName + "Failed to send message with error: " + err.message);
             });
         });
     }
@@ -631,14 +752,14 @@ Telnet.on("data", (data) => {
       handleTime(line, d7dtdState.waitingForTimeMsg);
     }
     else if(d7dtdState.waitingForVersion && line.startsWith("Game version:")) {
-      d7dtdState.waitingForVersionMsg.channel.send(line);
+      d7dtdState.waitingForVersionMsg.channel.send("" + instanceName + line);
     }
     else if(d7dtdState.waitingForPlayers && line.startsWith("Total of ")) {
-      d7dtdState.waitingForPlayersMsg.channel.send(line);
+      d7dtdState.waitingForPlayersMsg.channel.send("" + instanceName + line);
     }
-    //else if(d7dtdState.waitingForPref && line.startsWith("GamePref.")) {
-    //  d7dtdState.waitingForPrefMsg.channel.send(line);
-    //}
+    else if(d7dtdState.waitingForPref && line.startsWith("GamePref.")) {
+     d7dtdState.waitingForPrefMsg.channel.send("" + instanceName + line);
+    }
     else {
       handleMsgFromGame(line);
     }
